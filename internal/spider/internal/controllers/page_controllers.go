@@ -8,17 +8,23 @@ import (
 	"spider/internal/utils"
 )
 
+// PageController handles persisting crawled page data to Redis.
+// It converts Page structs to Redis hashes and pushes page keys
+// to the indexer queue for downstream processing.
 type PageController struct {
 	db *database.Database
 }
 
+// NewPageController creates a new PageController with the given database connection.
 func NewPageController(db *database.Database) *PageController {
 	return &PageController{
 		db: db,
 	}
 }
 
-//saviing the page data to redis
+// SavePages flushes all crawled pages from the batch to Redis using a pipeline.
+// For each page, it writes a Redis hash (page_data:<url>) and pushes the key
+// to the pages_queue list for the indexer to consume.
 func (pc *PageController) SavePages(crawcfg *crawler.CrawlerConfig){
 
 	data := crawcfg.Pages
@@ -34,13 +40,9 @@ func (pc *PageController) SavePages(crawcfg *crawler.CrawlerConfig){
             continue
 		}
 
-		// Append command to pipeline
+		// Append commands to pipeline
         pipeline.HSet(pc.db.Context, utils.PagePrefix + ":"+page.NormalizedURL, pageHash)
-
-        // Push to the indexer queue
-        // NOTE: For some weird reason "indexer_queue" does not work, but any other name does :/
-        // res, err := pgc.db.Client.LPush(pgc.db.Context, utils.IndexerQueueKey, utils.PagePrefix + ":" +page.NormalizedURL).Result()
-        pc.db.Client.LPush(pc.db.Context, utils.IndexerQueueKey, utils.PagePrefix + ":" +page.NormalizedURL).Result()
+        pipeline.LPush(pc.db.Context, utils.IndexerQueueKey, utils.PagePrefix + ":"+page.NormalizedURL)
 
 	}
 

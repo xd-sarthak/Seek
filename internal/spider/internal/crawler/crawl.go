@@ -8,7 +8,23 @@ import (
 	"spider/internal/database"
 )
 
-//bfs crawling
+// Crawl runs the BFS crawl loop for a single worker goroutine.
+// Each invocation pops URLs from the Redis frontier, fetches pages,
+// extracts links and images, and stores results in the shared CrawlerConfig.
+//
+// The worker exits when:
+//   - MaxPages is reached for the current batch
+//   - The frontier queue is empty (BZPopMin times out)
+//
+// Steps per iteration:
+//  1. Check batch page limit
+//  2. Pop next URL from Redis sorted set (BZPopMin)
+//  3. Check deduplication (Redis visited hash)
+//  4. Fetch HTML via HTTP GET
+//  5. Parse HTML and extract links + images
+//  6. Store images and update link graph in CrawlerConfig
+//  7. Mark URL as visited in Redis
+//  8. Enqueue discovered URLs with depth-based scores
 func (crawcfg *CrawlerConfig) Crawl(db *database.Database) {
 	//starting a new webcrawler
 	defer crawcfg.Wg.Done()
@@ -93,13 +109,10 @@ func (crawcfg *CrawlerConfig) Crawl(db *database.Database) {
 				continue
 			}
 
-			// Check if the thing exists in the queue, and update weight
+			// Check if the URL already exists in the queue
 			score, exists := db.ExistsInQueue(rawCurrentLink)
-			if exists {
-				// NOTE: I decided to disable this for now.
-				// I'll see how it performs without it.
-				// score -= 0.001
-			} else {
+			if !exists {
+				// New URL: assign score based on depth level
 				score = depthLevel + 1
 			}
 

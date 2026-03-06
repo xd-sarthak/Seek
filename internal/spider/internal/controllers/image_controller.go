@@ -8,16 +8,24 @@ import (
 	"time"
 )
 
+// ImageController handles persisting extracted image metadata to Redis.
+// Each image is stored as a hash with a 1-hour TTL, and a reverse index
+// maps pages to their images via page_images:<url> sets.
 type ImageController struct {
 	db *database.Database
 }
 
+// NewImageController creates a new ImageController with the given database connection.
 func NewImageController(db *database.Database) *ImageController {
 	return &ImageController{
 		db: db,
 	}
 }
 
+// SaveImages flushes all extracted images from the batch to Redis using a pipeline.
+// For each image, it writes:
+//   - image_data:<source_url> hash with page_url and alt fields (1h TTL)
+//   - page_images:<page_url> set with the image source URL
 func (pgc *ImageController) SaveImages(crawcfg *crawler.CrawlerConfig) {
 	pipeline := pgc.db.Client.Pipeline()
 

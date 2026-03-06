@@ -86,7 +86,7 @@ func main(){
 				}
 
 				if sig == utils.ResumeCrawl {
-					log.Printf("could not get signal: %v\n", err)
+					log.Printf("Received RESUME_CRAWL signal, resuming...\n")
 					break
 				}
 			}

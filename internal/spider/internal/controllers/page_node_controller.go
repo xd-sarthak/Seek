@@ -7,16 +7,23 @@ import (
 	"log"
 )
 
+// LinksController handles persisting link graph data (backlinks and outlinks)
+// to Redis. Uses SADD to store directional links as Redis sets.
 type LinksController struct {
 	db *database.Database
 }
 
+// NewLinksController creates a new LinksController with the given database connection.
 func NewLinksController(db *database.Database) *LinksController {
 	return &LinksController{
 		db: db,
 	}
 }
 
+// SaveLinks flushes all backlink and outlink data from the batch to Redis
+// using a pipeline. For each page node:
+//   - backlinks:<url> set stores all pages that link TO this URL
+//   - outlinks:<url> set stores all pages that this URL links TO
 func (pgc *LinksController) SaveLinks(crawcfg *crawler.CrawlerConfig) {
     pipeline := pgc.db.Client.Pipeline()
 

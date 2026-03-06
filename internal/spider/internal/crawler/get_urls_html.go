@@ -8,6 +8,16 @@ import (
 	"spider/internal/utils"
 )
 
+// getURLsFromHTML parses an HTML document and extracts all hyperlinks and images.
+//
+// Returns:
+//   - links: deduplicated slice of absolute URLs extracted from <a href> tags
+//   - imagesMap: map of normalized image source URLs to their attributes
+//     (keys: image URL, values: map with "src" and optionally "alt")
+//   - err: non-nil if the base URL or HTML could not be parsed
+//
+// Relative URLs are resolved against rawURL. Malformed and non-ASCII URLs
+// are silently skipped.
 func getURLsFromHTML(htmlBody string, rawURL string) ([]string, map[string]map[string]string, error) {
     baseURL, err := url.Parse(rawURL)
     if err != nil {
@@ -34,8 +44,13 @@ func getURLsFromHTML(htmlBody string, rawURL string) ([]string, map[string]map[s
     return links, imagesMap, nil
 }
 
+// nonASCIIRegex matches any character outside the printable ASCII range.
+// Used to filter out URLs containing non-ASCII characters.
 var nonASCIIRegex = regexp.MustCompile(`[^\x20-\x7E]`)
 
+// traverse performs a depth-first walk of the HTML node tree, collecting
+// <a href> links into linksSet and <img src/alt> data into imagesMap.
+// Relative URLs are resolved against baseURL.
 func traverse(node *html.Node, baseURL *url.URL, linksSet map[string]struct{}, imagesMap map[string]map[string]string) {
 	if node == nil {
 		return
@@ -117,8 +132,7 @@ func traverse(node *html.Node, baseURL *url.URL, linksSet map[string]struct{}, i
             }
         }
 
-        if len(imageDetails) > 0 {
-            imgURL := imageDetails["src"]
+        if imgURL, hasSrc := imageDetails["src"]; hasSrc && imgURL != "" {
             imagesMap[imgURL] = imageDetails
         }
 	}
