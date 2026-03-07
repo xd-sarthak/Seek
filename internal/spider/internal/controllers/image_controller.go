@@ -1,10 +1,11 @@
 package controllers
 
 import (
+	"context"
+	"log"
+	"spider/internal/crawler"
 	"spider/internal/database"
 	"spider/internal/utils"
-	"spider/internal/crawler"
-	"log"
 	"time"
 )
 
@@ -27,6 +28,7 @@ func NewImageController(db *database.Database) *ImageController {
 //   - image_data:<source_url> hash with page_url and alt fields (1h TTL)
 //   - page_images:<page_url> set with the image source URL
 func (pgc *ImageController) SaveImages(crawcfg *crawler.CrawlerConfig) {
+	ctx := context.Background()
 	pipeline := pgc.db.Client.Pipeline()
 
 	log.Printf("Saving images...\n")
@@ -36,22 +38,22 @@ func (pgc *ImageController) SaveImages(crawcfg *crawler.CrawlerConfig) {
 	for normalizedURL, imageData := range data {
 		for _, image := range imageData {
 			imageKey := utils.ImagePrefix + ":" + image.NormalizedSourceURL
-			pipeline.HSet(pgc.db.Context, imageKey, map[string]interface{}{
+			pipeline.HSet(ctx, imageKey, map[string]interface{}{
 				"page_url": image.NormalizedPageURL,
 				"alt":      image.Alt,
 			})
 
-			pipeline.Expire(pgc.db.Context, imageKey, 1*time.Hour) // 1 hour TTL
+			pipeline.Expire(ctx, imageKey, 1*time.Hour) // 1 hour TTL
 
 			count += 1
 
 			// Store the image under a page image set
 			pageImagesKey := utils.PageImagesPrefix + ":" + normalizedURL
-			pipeline.SAdd(pgc.db.Context, pageImagesKey, image.NormalizedSourceURL)
+			pipeline.SAdd(ctx, pageImagesKey, image.NormalizedSourceURL)
 		}
 	}
 
-	_, err := pipeline.Exec(pgc.db.Context)
+	_, err := pipeline.Exec(ctx)
 	if err != nil {
 		log.Printf("Error saving images: %v\n", err)
 	} else {

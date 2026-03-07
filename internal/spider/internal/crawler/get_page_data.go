@@ -1,11 +1,18 @@
 package crawler
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"spider/internal/utils"
 )
 
 // maxResponseBodySize is the maximum number of bytes to read from a response body (10MB).
@@ -23,6 +30,96 @@ var httpClient = &http.Client{
 	},
 }
 
+// isRetryable returns true if the error or status code indicates the request
+// should be retried (server errors, timeouts, connection issues).
+func isRetryable(err error, statusCode int) bool {
+	// Server errors are retryable
+	if statusCode >= 500 {
+		return true
+	}
+
+	if err == nil {
+		return false
+	}
+
+	// Timeout errors
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	// Connection refused / reset
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+
+	// Context deadline exceeded (but not cancelled — that means shutdown)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	return false
+}
+
+// backoffDuration calculates the sleep duration for a retry attempt using
+// exponential backoff with jitter: InitialBackoff * 2^attempt * (1 + rand(0, 0.25))
+func backoffDuration(attempt int) time.Duration {
+	backoff := utils.InitialBackoff * (1 << attempt)
+	if backoff > utils.MaxBackoff {
+		backoff = utils.MaxBackoff
+	}
+
+	// Add up to 25% jitter
+	jitter := time.Duration(rand.Float64() * 0.25 * float64(backoff))
+	return backoff + jitter
+}
+
+// getPageDataWithRetry wraps getPageData with exponential backoff retry logic.
+// It retries on server errors (5xx) and transient network errors, but NOT on
+// client errors (4xx) or content-type mismatches.
+//
+// Returns immediately if the context is cancelled (graceful shutdown).
+func getPageDataWithRetry(ctx context.Context, rawURL string) (string, int, string, error) {
+	var lastErr error
+
+	for attempt := range utils.MaxRetries {
+		// Check if context has been cancelled (graceful shutdown)
+		select {
+		case <-ctx.Done():
+			return "", 0, "", fmt.Errorf("context cancelled: %w", ctx.Err())
+		default:
+		}
+
+		html, statusCode, contentType, err := getPageData(ctx, rawURL)
+		if err == nil {
+			return html, statusCode, contentType, nil
+		}
+
+		lastErr = err
+
+		// Don't retry client errors (4xx) or content-type mismatches
+		if !isRetryable(err, statusCode) {
+			return html, statusCode, contentType, err
+		}
+
+		// Don't sleep after the last attempt
+		if attempt < utils.MaxRetries-1 {
+			sleepDur := backoffDuration(attempt)
+			log.Printf("[retry] Attempt %d/%d failed for %s: %v (retrying in %v)",
+				attempt+1, utils.MaxRetries, rawURL, err, sleepDur)
+
+			select {
+			case <-ctx.Done():
+				return "", 0, "", fmt.Errorf("context cancelled during backoff: %w", ctx.Err())
+			case <-time.After(sleepDur):
+			}
+		}
+	}
+
+	return "", 0, "", fmt.Errorf("all %d attempts failed for %s: %w", utils.MaxRetries, rawURL, lastErr)
+}
+
 // getPageData fetches a web page and returns its HTML body, HTTP status code,
 // content type, and any error encountered.
 //
@@ -38,8 +135,8 @@ var httpClient = &http.Client{
 //   - statusCode: HTTP status code (0 if request failed entirely)
 //   - contentType: the Content-Type header value
 //   - err: non-nil if the page could not be fetched or is not HTML
-func getPageData(rawURL string) (string, int, string, error) {
-	req, err := http.NewRequest("GET", rawURL, nil)
+func getPageData(ctx context.Context, rawURL string) (string, int, string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
 		return "", 0, "", fmt.Errorf("failed to create request: %w", err)
 	}

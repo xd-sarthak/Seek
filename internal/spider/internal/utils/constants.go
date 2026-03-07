@@ -10,6 +10,15 @@ const (
 	MaxScore = 10000
 	MinScore = -1000
 
+	// Retry constants
+	MaxRetries       = 3
+	InitialBackoff   = 500 * time.Millisecond
+	MaxBackoff       = 8 * time.Second
+
+	// Rate limiter constants
+	DefaultRatePerSecond = 2.0
+	DefaultBurstSize     = 1
+
 	// Message Queues
 	SpiderQueueKey      = "spider_queue"
 	IndexerQueueKey     = "pages_queue"

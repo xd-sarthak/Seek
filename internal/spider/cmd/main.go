@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
+	"os/signal"
 	"spider/internal/controllers"
 	"spider/internal/crawler"
 	"spider/internal/database"
 	"spider/internal/pages"
+	"spider/internal/ratelimiter"
+	"spider/internal/robotstxt"
 	"spider/internal/utils"
 	"sync"
+	"syscall"
 )
 
 // getEnv retrieves the value of an environment variable or returns a fallback value if not set.
@@ -21,39 +26,46 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func main(){
-	//parse the flags 
+func main() {
+	// Parse the flags
 	maxConcurrency := flag.Int("max-concurrency", 10, "Maximum number of concurrent workers")
 	maxPages := flag.Int("max-pages", 100, "Maximum number of pages per batch")
 	flag.Parse()
 
-	//get the environment variables
+	// Get the environment variables
 	redisHost := getEnv("REDIS_HOST", "localhost")
 	redisPort := getEnv("REDIS_PORT", "6379")
 	redisPassword := getEnv("REDIS_PASSWORD", "")
 	redisDB := getEnv("REDIS_DB", "0")
 	startingURL := getEnv("STARTING_URL", "https://en.wikipedia.org/wiki/Kamen_Rider")
 
-	//connect to redis
+	// Set up graceful shutdown via context
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Connect to redis
 	db := &database.Database{}
 	err := db.ConnectToRedis(redisHost, redisPort, redisPassword, redisDB)
 	if err != nil {
-		log.Printf("Error: %v\n",err)
+		log.Printf("Error: %v\n", err)
 		return
 	}
 
-	//Add an entry to message queue
-	db.PushURL(startingURL,0)
+	// Add an entry to message queue
+	db.PushURL(startingURL, 0)
 	log.Printf("PUSH %v\n", startingURL)
 
-	//instantiate the controllers
+	// Instantiate robots.txt checker and rate limiter
+	robots := robotstxt.NewRobotsChecker("SearchEngineSpider/1.0")
+	limiter := ratelimiter.NewDomainLimiter(utils.DefaultRatePerSecond, utils.DefaultBurstSize)
+
+	// Instantiate the controllers
 	pageController := controllers.NewPageController(db)
 	linksController := controllers.NewLinksController(db)
 	imageController := controllers.NewImageController(db)
 
-	
 	// Instantiate crawler
-	crawler := &crawler.CrawlerConfig{
+	crawlerCfg := &crawler.CrawlerConfig{
 		Mu:             &sync.Mutex{},
 		Wg:             &sync.WaitGroup{},
 		Pages:          make(map[string]*pages.Page),
@@ -64,24 +76,47 @@ func main(){
 		MaxConcurrency: *maxConcurrency,
 	}
 
-	//infinite loop to keep the crawler running
+	// Infinite loop to keep the crawler running
 	for {
-		//check how many urls are in the indexer queue
+		// Check if shutdown has been requested
+		select {
+		case <-ctx.Done():
+			log.Printf("Shutdown signal received, exiting...\n")
+			return
+		default:
+		}
+
+		// Check how many urls are in the indexer queue
 		log.Printf("checking number of entries...\n")
-		queueSize,err := db.GetIndexerQueueSize()
+		queueSize, err := db.GetIndexerQueueSize(ctx)
 
 		if err != nil {
-			log.Printf("Error getting indexer queue: %v\n",err)
+			if ctx.Err() != nil {
+				log.Printf("Shutdown during queue size check\n")
+				break
+			}
+			log.Printf("Error getting indexer queue: %v\n", err)
 			return
 		}
 
 		if queueSize >= utils.MaxIndexerQueueSize {
-			log.Printf("Indexer queue has %v entries, waiting...\n",queueSize)
-			//wait until we receive a signal that the indexer queue has been processed
+			log.Printf("Indexer queue has %v entries, waiting...\n", queueSize)
+			// Wait until we receive a signal that the indexer queue has been processed
 			for {
-				sig, err := db.PopSignalQueue()
+				select {
+				case <-ctx.Done():
+					log.Printf("Shutdown signal received while waiting for indexer\n")
+					return
+				default:
+				}
+
+				sig, err := db.PopSignalQueue(ctx)
 				if err != nil {
-					log.Printf("Error popping signal queue: %v\n",err)
+					if ctx.Err() != nil {
+						log.Printf("Shutdown during signal wait\n")
+						return
+					}
+					log.Printf("Error popping signal queue: %v\n", err)
 					return
 				}
 
@@ -93,22 +128,29 @@ func main(){
 		}
 
 		log.Printf("Spawning workers...\n")
-		for range crawler.MaxConcurrency {
-			crawler.Wg.Add(1)
-			go crawler.Crawl(db)
+		for range crawlerCfg.MaxConcurrency {
+			crawlerCfg.Wg.Add(1)
+			go crawlerCfg.Crawl(ctx, db, robots, limiter)
 		}
 
-		crawler.Wg.Wait()
+		crawlerCfg.Wg.Wait()
 
-		//write entries to the database
-		pageController.SavePages(crawler)
-		linksController.SaveLinks(crawler)
-		imageController.SaveImages(crawler)
+		// Write entries to the database (always flush, even on shutdown)
+		log.Printf("Flushing batch data to Redis...\n")
+		pageController.SavePages(crawlerCfg)
+		linksController.SaveLinks(crawlerCfg)
+		imageController.SaveImages(crawlerCfg)
 
 		// Clean visited pages by this runner
-		crawler.Pages = make(map[string]*pages.Page)
-		crawler.Outlinks = make(map[string]*pages.PageNode)
-		crawler.Backlinks = make(map[string]*pages.PageNode)
-		crawler.Images = make(map[string][]*pages.Image)
+		crawlerCfg.Pages = make(map[string]*pages.Page)
+		crawlerCfg.Outlinks = make(map[string]*pages.PageNode)
+		crawlerCfg.Backlinks = make(map[string]*pages.PageNode)
+		crawlerCfg.Images = make(map[string][]*pages.Image)
+
+		// After flushing, if shutdown was requested, exit cleanly
+		if ctx.Err() != nil {
+			log.Printf("Batch flushed. Shutting down gracefully.\n")
+			return
+		}
 	}
 }

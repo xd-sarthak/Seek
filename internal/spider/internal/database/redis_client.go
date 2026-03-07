@@ -10,12 +10,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Database wraps a Redis client and context, providing domain-specific
+// Database wraps a Redis client and provides domain-specific
 // methods for the crawler's queue operations, visited tracking, and
 // inter-service signaling.
 type Database struct {
-	Client  *redis.Client
-	Context context.Context
+	Client *redis.Client
 }
 
 // ConnectToRedis establishes a connection to the Redis server.
@@ -35,11 +34,10 @@ func (db *Database) ConnectToRedis(redisHost, redisPort, redisPassword, redisDB 
 		DB:       dbIndex,
 	})
 
-	db.Context = context.Background()
-
-	_, err = db.Client.Ping(db.Context).Result()
+	ctx := context.Background()
+	_, err = db.Client.Ping(ctx).Result()
 	if err != nil {
-		return fmt.Errorf("Couldn't connect to shit [%v, %v]: %v", redisHost, redisPassword, err)
+		return fmt.Errorf("couldn't connect to Redis [%v]: %v", redisHost, err)
 	}
 
 	log.Println("Successfully connected to Redis!")
@@ -65,7 +63,8 @@ func (db *Database) PushURL(rawURL string, score float64) error {
 	}
 
 	//add the normalized url to a sorted set with 0 as a priority score
-	err = db.Client.ZAdd(db.Context, utils.SpiderQueueKey, redis.Z{
+	ctx := context.Background()
+	err = db.Client.ZAdd(ctx, utils.SpiderQueueKey, redis.Z{
 		Score:  score,
 		Member: normalizedURL,
 	}).Err()
@@ -88,7 +87,8 @@ func (db *Database) ExistsInQueue(rawURL string) (float64, bool) {
 		return 0.0, false
 	}
 
-	score, err := db.Client.ZScore(db.Context, utils.SpiderQueueKey, normalizedURL).Result()
+	ctx := context.Background()
+	score, err := db.Client.ZScore(ctx, utils.SpiderQueueKey, normalizedURL).Result()
 	if err != nil {
 		// redis.Nil means the member does not exist in the sorted set
 		return 0.0, false
@@ -100,8 +100,8 @@ func (db *Database) ExistsInQueue(rawURL string) (float64, bool) {
 // GetIndexerQueueSize returns the number of entries in the pages_queue list.
 // Used by the main loop for backpressure: if the size exceeds
 // MaxIndexerQueueSize, crawling is paused until a RESUME_CRAWL signal arrives.
-func (db *Database) GetIndexerQueueSize() (int64, error) {
-	size, err := db.Client.LLen(db.Context, utils.IndexerQueueKey).Result()
+func (db *Database) GetIndexerQueueSize(ctx context.Context) (int64, error) {
+	size, err := db.Client.LLen(ctx, utils.IndexerQueueKey).Result()
 
 	if err != nil {
 		return -1, fmt.Errorf("could not get %v size: %v", utils.IndexerQueueKey, err)
@@ -112,15 +112,14 @@ func (db *Database) GetIndexerQueueSize() (int64, error) {
 
 // PopSignalQueue performs a blocking pop (BRPOP) on the signal_queue list
 // with no timeout. Returns the signal value (e.g., "RESUME_CRAWL").
-// Blocks indefinitely until a signal is available.
-func (db *Database) PopSignalQueue() (string, error) {
-	signal, err := db.Client.BRPop(db.Context, 0, utils.SignalQueueKey).Result()
+// Blocks indefinitely until a signal is available or the context is cancelled.
+func (db *Database) PopSignalQueue(ctx context.Context) (string, error) {
+	signal, err := db.Client.BRPop(ctx, 0, utils.SignalQueueKey).Result()
 	if err != nil {
-		return "", fmt.Errorf("Coult not pop from signal queue: %v\n", err)
+		return "", fmt.Errorf("could not pop from signal queue: %v\n", err)
 	}
 	return signal[1], nil
 }
-
 
 // PopURL performs a blocking pop of the lowest-score URL from spider_queue.
 // Uses BZPopMin with a 5-second timeout.
@@ -130,9 +129,9 @@ func (db *Database) PopSignalQueue() (string, error) {
 //   - score: the URL's depth/priority score
 //   - normalizedURL: the canonical form of the URL
 //   - err: non-nil if the queue is empty after timeout or a Redis error occurs
-func (db *Database) PopURL() (string, float64, string, error) {
+func (db *Database) PopURL(ctx context.Context) (string, float64, string, error) {
 	//get the next normalized url from the priority queue
-	result, err := db.Client.BZPopMin(db.Context, utils.Timeout, utils.SpiderQueueKey).Result()
+	result, err := db.Client.BZPopMin(ctx, utils.Timeout, utils.SpiderQueueKey).Result()
 	if err != nil {
 		return "", 0.0, "", fmt.Errorf("could not pop URL from queue: %w", err)
 	}
@@ -147,9 +146,9 @@ func (db *Database) PopURL() (string, float64, string, error) {
 // HasURLBeenVisited checks whether a normalized URL has been crawled before
 // by reading the "visited" field from the normalized_url:<url> hash in Redis.
 // Returns false if the key or field does not exist.
-func (db *Database) HasURLBeenVisited(normalizedURL string) (bool, error) {
+func (db *Database) HasURLBeenVisited(ctx context.Context, normalizedURL string) (bool, error) {
 	normalized_url_key := utils.NormalizedURLPrefix + ":" + normalizedURL
-	result, err := db.Client.HGet(db.Context, normalized_url_key, "visited").Result()
+	result, err := db.Client.HGet(ctx, normalized_url_key, "visited").Result()
 
 	if err == redis.Nil {
 		return false, nil
@@ -165,13 +164,12 @@ func (db *Database) HasURLBeenVisited(normalizedURL string) (bool, error) {
 	return visited != 0, nil
 }
 
-
 // VisitPage marks a normalized URL as visited by setting the "visited" field
 // to 1 in the normalized_url:<url> hash. This prevents future workers from
 // re-crawling the same URL.
-func (db *Database) VisitPage(normalizedURL string) error {
+func (db *Database) VisitPage(ctx context.Context, normalizedURL string) error {
 	normalized_url_key := utils.NormalizedURLPrefix + ":" + normalizedURL
-	_, err := db.Client.HSet(db.Context, normalized_url_key, "visited", 1).Result()
+	_, err := db.Client.HSet(ctx, normalized_url_key, "visited", 1).Result()
 
 	if err != nil {
 		return fmt.Errorf("could not update visit %v from Redis: %w", normalized_url_key, err)
