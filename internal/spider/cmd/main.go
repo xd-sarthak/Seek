@@ -38,6 +38,7 @@ func main() {
 	redisPassword := getEnv("REDIS_PASSWORD", "")
 	redisDB := getEnv("REDIS_DB", "0")
 	startingURL := getEnv("STARTING_URL", "https://en.wikipedia.org/wiki/Kamen_Rider")
+	allowedDomains := utils.ParseAllowedDomains(getEnv("ALLOWED_DOMAINS", ""))
 
 	// Set up graceful shutdown via context
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -51,8 +52,23 @@ func main() {
 		return
 	}
 
+	allowed, err := utils.IsURLAllowed(startingURL, allowedDomains)
+	if err != nil {
+		log.Printf("Invalid STARTING_URL: %v\n", err)
+		return
+	}
+
+	if !allowed {
+		log.Printf("STARTING_URL host is not in ALLOWED_DOMAINS: %v\n", startingURL)
+		return
+	}
+
 	// Add an entry to message queue
-	db.PushURL(startingURL, 0)
+	err = db.PushURL(startingURL, 0)
+	if err != nil {
+		log.Printf("Error seeding crawler: %v\n", err)
+		return
+	}
 	log.Printf("PUSH %v\n", startingURL)
 
 	// Instantiate robots.txt checker and rate limiter
@@ -72,6 +88,7 @@ func main() {
 		Outlinks:       make(map[string]*pages.PageNode),
 		Backlinks:      make(map[string]*pages.PageNode),
 		Images:         make(map[string][]*pages.Image),
+		AllowedDomains: allowedDomains,
 		MaxPages:       *maxPages,
 		MaxConcurrency: *maxConcurrency,
 	}
