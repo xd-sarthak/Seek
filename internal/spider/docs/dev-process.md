@@ -57,7 +57,7 @@ All configuration is done via environment variables with sensible defaults:
 | `REDIS_PASSWORD` | _(empty)_                                          | Redis authentication password                |
 | `REDIS_DB`       | `0`                                                | Redis database index (0–15)                  |
 | `STARTING_URL`   | `https://en.wikipedia.org/wiki/Kamen_Rider`        | Seed URL for the crawler                     |
-| `ALLOWED_DOMAINS`| _(empty)_                                          | Comma-separated host allowlist for focused crawling |
+| `ALLOWED_DOMAINS`| `github.com,raw.githubusercontent.com,stackoverflow.com,developer.mozilla.org,docs.python.org,react.dev,nodejs.org,golang.org,docs.docker.com,kubernetes.io,pkg.go.dev,docs.rs` | Comma-separated host allowlist for focused crawling |
 
 ### Example: Custom Redis and Seed URL
 
@@ -66,7 +66,7 @@ REDIS_HOST=redis.prod.internal \
 REDIS_PORT=6380 \
 REDIS_PASSWORD=secret \
 STARTING_URL=https://example.com \
-ALLOWED_DOMAINS=example.com,developer.mozilla.org \
+ALLOWED_DOMAINS=github.com,raw.githubusercontent.com,stackoverflow.com,developer.mozilla.org,docs.python.org,react.dev,nodejs.org,golang.org,docs.docker.com,kubernetes.io,pkg.go.dev,docs.rs \
 go run ./cmd/main.go --max-concurrency=50 --max-pages=1000
 ```
 

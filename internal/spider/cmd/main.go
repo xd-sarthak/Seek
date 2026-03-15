@@ -38,7 +38,7 @@ func main() {
 	redisPassword := getEnv("REDIS_PASSWORD", "")
 	redisDB := getEnv("REDIS_DB", "0")
 	startingURL := getEnv("STARTING_URL", "https://en.wikipedia.org/wiki/Kamen_Rider")
-	allowedDomains := utils.ParseAllowedDomains(getEnv("ALLOWED_DOMAINS", ""))
+	allowedDomains := utils.ParseAllowedDomains(getEnv("ALLOWED_DOMAINS", utils.DefaultAllowedDomains))
 
 	// Set up graceful shutdown via context
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

@@ -7,7 +7,7 @@ import (
 )
 
 func TestEvaluateURL(t *testing.T) {
-	allowedDomains := utils.ParseAllowedDomains("github.com,stackoverflow.com")
+	allowedDomains := utils.ParseAllowedDomains(utils.DefaultAllowedDomains)
 
 	testCases := []struct {
 		name           string
@@ -23,7 +23,9 @@ func TestEvaluateURL(t *testing.T) {
 		{name: "github repo prioritized", rawURL: "https://github.com/openai/openai-go", allowed: true, adjustment: -2.0, reasonContains: "repository"},
 		{name: "github blob prioritized", rawURL: "https://github.com/openai/openai-go/blob/main/README.md", allowed: true, adjustment: -1.0, reasonContains: "source file"},
 		{name: "github issues deprioritized", rawURL: "https://github.com/openai/openai-go/issues", allowed: true, adjustment: 1.5, reasonContains: "collaboration"},
+		{name: "raw github content fallback neutral", rawURL: "https://raw.githubusercontent.com/openai/openai-go/main/README.md", allowed: true, adjustment: 0, reasonContains: "default allowed host"},
 		{name: "stackoverflow question prioritized", rawURL: "https://stackoverflow.com/questions/1/example", allowed: true, adjustment: -1.5, reasonContains: "question"},
+		{name: "mdn fallback neutral", rawURL: "https://developer.mozilla.org/en-US/docs/Web/HTTP", allowed: true, adjustment: 0, reasonContains: "default allowed host"},
 		{name: "stackoverflow tagged questions deprioritized", rawURL: "https://stackoverflow.com/questions/tagged/go", allowed: true, adjustment: 1.0, reasonContains: "tagged"},
 		{name: "stackoverflow users deprioritized", rawURL: "https://stackoverflow.com/users/123/name", allowed: true, adjustment: 1.5, reasonContains: "user"},
 		{name: "allowed host fallback neutral", rawURL: "https://github.com/openai", allowed: true, adjustment: 0, reasonContains: "fallback"},
