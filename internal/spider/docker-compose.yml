@@ -21,7 +21,8 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
       - REDIS_DB=0
-      - STARTING_URL=https://en.wikipedia.org/wiki/Kamen_Rider
+      - STARTING_URL=https://github.com
+      - ALLOWED_DOMAINS=github.com,raw.githubusercontent.com,stackoverflow.com,developer.mozilla.org,docs.python.org,react.dev,nodejs.org,golang.org,docs.docker.com,kubernetes.io,pkg.go.dev,docs.rs
     command: ["--max-concurrency=10", "--max-pages=100"]
     restart: on-failure
 

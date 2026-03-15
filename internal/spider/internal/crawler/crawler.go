@@ -1,10 +1,10 @@
 package crawler
 
 import (
+	"fmt"
 	"spider/internal/pages"
 	"spider/internal/utils"
 	"sync"
-	"fmt"
 )
 
 // CrawlerConfig holds the shared state for a single crawl batch.
@@ -18,107 +18,103 @@ type CrawlerConfig struct {
 	Outlinks       map[string]*pages.PageNode // Outgoing links per page, keyed by source URL
 	Backlinks      map[string]*pages.PageNode // Incoming links per page, keyed by target URL
 	Images         map[string][]*pages.Image  // Images per page, keyed by page URL
+	AllowedDomains map[string]struct{}        // Optional host allowlist for focused crawling
 	MaxPages       int                        // Maximum pages to crawl per batch cycle
 	MaxConcurrency int                        // Number of concurrent worker goroutines
 }
 
-func (crawcfg *CrawlerConfig) lenPages () int {
+func (crawcfg *CrawlerConfig) lenPages() int {
 	crawcfg.Mu.Lock()
 	defer crawcfg.Mu.Unlock()
 
 	return len(crawcfg.Pages)
 }
 
-func (crawcfg *CrawlerConfig) maxPagesReached() (bool) {
-    crawcfg.Mu.Lock()
-    defer crawcfg.Mu.Unlock()
+func (crawcfg *CrawlerConfig) maxPagesReached() bool {
+	crawcfg.Mu.Lock()
+	defer crawcfg.Mu.Unlock()
 
-    if len(crawcfg.Pages) >= crawcfg.MaxPages {
-        // Can't add more pages because max pages has been reached
-        return true
-    }
+	if len(crawcfg.Pages) >= crawcfg.MaxPages {
+		// Can't add more pages because max pages has been reached
+		return true
+	}
 
-    // Max pages has not been reached
-    return false
+	// Max pages has not been reached
+	return false
 }
-
-
 
 // AddImages extracts image metadata from the raw imagesMap and stores
 // them in the batch under the given page URL. Thread-safe via Mu.
 //
 // imagesMap keys are normalized image source URLs; values contain
 // "src" and optionally "alt" entries.
-func (crawcfg* CrawlerConfig) AddImages(normalizedCurrentURL string, imagesMap map[string]map[string]string) {
-    crawcfg.Mu.Lock()
-    defer crawcfg.Mu.Unlock()
+func (crawcfg *CrawlerConfig) AddImages(normalizedCurrentURL string, imagesMap map[string]map[string]string) {
+	crawcfg.Mu.Lock()
+	defer crawcfg.Mu.Unlock()
 
-    for imgURL, imgAttrs := range imagesMap {
-        imgAlt := ""
-        if alt, exists := imgAttrs["alt"]; exists {
-            imgAlt = alt
-        }
+	for imgURL, imgAttrs := range imagesMap {
+		imgAlt := ""
+		if alt, exists := imgAttrs["alt"]; exists {
+			imgAlt = alt
+		}
 
-        image := &pages.Image {
-            NormalizedPageURL:   normalizedCurrentURL,
-            NormalizedSourceURL: imgURL,
-            Alt:                 imgAlt,
+		image := &pages.Image{
+			NormalizedPageURL:   normalizedCurrentURL,
+			NormalizedSourceURL: imgURL,
+			Alt:                 imgAlt,
+		}
 
-        }
-
-        crawcfg.Images[normalizedCurrentURL] = append(crawcfg.Images[normalizedCurrentURL], image)
-    }
+		crawcfg.Images[normalizedCurrentURL] = append(crawcfg.Images[normalizedCurrentURL], image)
+	}
 }
-
 
 // UpdateLinks builds the outlink and backlink graph for the current page.
 // For each valid outgoing link, it creates an outlink entry on the current
 // page and a backlink entry on the target page. Self-links are skipped.
 // Thread-safe via Mu.
 func (crawcfg *CrawlerConfig) UpdateLinks(normalizedCurrentURL string, outgoingLinks []string) {
-    crawcfg.Mu.Lock()
-    defer crawcfg.Mu.Unlock()
+	crawcfg.Mu.Lock()
+	defer crawcfg.Mu.Unlock()
 
-    crawcfg.Outlinks[normalizedCurrentURL] = pages.CreatePageNode(normalizedCurrentURL)
-    for _, link := range outgoingLinks {
-        if utils.IsValidURL(link) {
-            // normalize url
-            normalizedOutgoingURL, err := utils.NormalizeURL(link)
-            if err != nil {
-                continue
-            }
+	crawcfg.Outlinks[normalizedCurrentURL] = pages.CreatePageNode(normalizedCurrentURL)
+	for _, link := range outgoingLinks {
+		if utils.IsValidURL(link) {
+			// normalize url
+			normalizedOutgoingURL, err := utils.NormalizeURL(link)
+			if err != nil {
+				continue
+			}
 
-            if normalizedOutgoingURL == normalizedCurrentURL {
-                continue
-            }
+			if normalizedOutgoingURL == normalizedCurrentURL {
+				continue
+			}
 
-            // If the entry does not exist
-            if _, exists := crawcfg.Backlinks[normalizedOutgoingURL]; !exists {
-                crawcfg.Backlinks[normalizedOutgoingURL] = pages.CreatePageNode(normalizedOutgoingURL)
-            }
+			// If the entry does not exist
+			if _, exists := crawcfg.Backlinks[normalizedOutgoingURL]; !exists {
+				crawcfg.Backlinks[normalizedOutgoingURL] = pages.CreatePageNode(normalizedOutgoingURL)
+			}
 
-            crawcfg.Backlinks[normalizedOutgoingURL].AppendLink(normalizedCurrentURL)
-            crawcfg.Outlinks[normalizedCurrentURL].AppendLink(normalizedOutgoingURL)
-        }
-    }
+			crawcfg.Backlinks[normalizedOutgoingURL].AppendLink(normalizedCurrentURL)
+			crawcfg.Outlinks[normalizedCurrentURL].AppendLink(normalizedOutgoingURL)
+		}
+	}
 }
 
-
 func (crawcfg *CrawlerConfig) addPage(page *pages.Page) error {
-    crawcfg.Mu.Lock()
-    defer crawcfg.Mu.Unlock()
+	crawcfg.Mu.Lock()
+	defer crawcfg.Mu.Unlock()
 
-    normalizedURL := page.NormalizedURL
+	normalizedURL := page.NormalizedURL
 
-    if _, visited := crawcfg.Pages[normalizedURL]; visited {
-        return fmt.Errorf("Page already visited")
-    }
+	if _, visited := crawcfg.Pages[normalizedURL]; visited {
+		return fmt.Errorf("Page already visited")
+	}
 
-    if len(crawcfg.Pages) >= crawcfg.MaxPages {
-        // Can't add more pages because max pages has been reached
-        return fmt.Errorf("Max pages reached")
-    }
+	if len(crawcfg.Pages) >= crawcfg.MaxPages {
+		// Can't add more pages because max pages has been reached
+		return fmt.Errorf("Max pages reached")
+	}
 
-    crawcfg.Pages[normalizedURL] = page
-    return nil
+	crawcfg.Pages[normalizedURL] = page
+	return nil
 }

@@ -79,6 +79,7 @@ go run ./cmd/main.go --max-concurrency=10 --max-pages=100
 | `REDIS_PASSWORD` | (empty)                                                  | Redis authentication password    |
 | `REDIS_DB`       | `0`                                                      | Redis database index             |
 | `STARTING_URL`   | `https://en.wikipedia.org/wiki/Kamen_Rider`              | Seed URL for crawling            |
+| `ALLOWED_DOMAINS`| `github.com,raw.githubusercontent.com,stackoverflow.com,developer.mozilla.org,docs.python.org,react.dev,nodejs.org,golang.org,docs.docker.com,kubernetes.io,pkg.go.dev,docs.rs` | Comma-separated host allowlist |
 
 ### CLI Flags
 
