@@ -6,6 +6,7 @@ import (
 	"math"
 	"spider/internal/database"
 	"spider/internal/pages"
+	"spider/internal/policy"
 	"spider/internal/ratelimiter"
 	"spider/internal/robotstxt"
 	"spider/internal/utils"
@@ -169,16 +170,30 @@ func (crawcfg *CrawlerConfig) Crawl(ctx context.Context, db *database.Database, 
 				continue
 			}
 
+			decision, err := policy.EvaluateURL(rawCurrentLink, crawcfg.AllowedDomains)
+			if err != nil {
+				log.Printf("Skipping malformed discovered URL %v: %v\n", rawCurrentLink, err)
+				continue
+			}
+
+			if !decision.Allowed {
+				log.Printf("Skipping %v: %s\n", rawCurrentLink, decision.Reason)
+				continue
+			}
+
+			candidateScore := depthLevel + 1 + decision.ScoreAdjustment
+
 			// Check if the URL already exists in the queue
 			score, exists := db.ExistsInQueue(rawCurrentLink)
-			if !exists {
-				// New URL: assign score based on depth level
-				score = depthLevel + 1
+			if exists {
+				score = math.Min(score, candidateScore)
+			} else {
+				score = candidateScore
 			}
 
 			score = math.Max(utils.MinScore, math.Min(score, utils.MaxScore))
 
-			// Update score based on depth
+			// Update score based on depth and focused-crawl policy.
 			_ = db.PushURL(rawCurrentLink, score)
 		}
 	}
