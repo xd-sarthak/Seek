@@ -35,8 +35,14 @@ class RedisClient:
             logger.error(f"Failed to connect to redis: {e}")
             self.client = None
 
+    def get_client(self):
+        return self.client
+
     # --------------------- MESSAGE QUEUE ---------------------
     def pop_page(self) -> Optional[str]:
+        if self.client is None:
+            logger.error(f"Redis connection not initialized")
+            return None
         try:
             popped = self.client.brpop(INDEXER_QUEUE_KEY)
             if not popped:
@@ -50,6 +56,9 @@ class RedisClient:
             return None
 
     def peek_page(self) -> Optional[str]:
+        if self.client is None:
+            logger.error(f"Redis connection not initialized")
+            return None
         try:
             peeked = self.client.lrange(INDEXER_QUEUE_KEY, -1, -1)
             if not peeked:

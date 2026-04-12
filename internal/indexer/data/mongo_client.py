@@ -25,16 +25,28 @@ DICTIONARY_COLLECTION = "dictionary"
 
 class MongoClient:
     def __init__(
-        self, host="localhost", port=27017, password="", db="test", username=""
+        self,
+        host="localhost",
+        port=27017,
+        password=None,
+        db="test",
+        username=None,
+        auth_source="admin",
     ):
         try:
+            if username and password:
+                uri = (
+                    f"mongodb://{username}:{password}@{host}:{port}/{db}"
+                    f"?authSource={auth_source}"
+                )
+            else:
+                uri = f"mongodb://{host}:{port}/{db}"
+
             self.client = pymongo.MongoClient(
-                f"mongodb://{username}:{password}@{host}:{port}/{db}?authSource=admin"
+                uri
             )
 
-            logger.info(
-                f"mongodb://{username}:{password}@{host}:{port}/{db}?authSource=admin"
-            )
+            logger.info(f"Connecting to MongoDB at {host}:{port}/{db}")
             self.db = self.client[db]
             self.client.admin.command("ping")
             logger.info("Successfully connected to mongo!")
@@ -190,5 +202,4 @@ class MongoClient:
             return None
 
         return self.perform_batch_operations(operations, DICTIONARY_COLLECTION)
-
 

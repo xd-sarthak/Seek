@@ -1,2 +1,32 @@
 # Local development notes and scratch docs
 /plan.md
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Node/Frontend (in case needed)
+node_modules/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Logs and Env vars
+*.log
+.env
+.env.local
+
+# Databases/Data dirs
+/data/
+/redis_data/
+/mongo_data/

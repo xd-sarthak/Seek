@@ -4,6 +4,10 @@ import os
 import sys
 from collections import Counter
 
+# Add parent directory to sys.path so 'data' and 'utils' can be imported 
+# when running `python cmd/main.py`
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from data.redis_client import RedisClient
 from data.mongo_client import MongoClient
 from utils.constants import *
@@ -27,11 +31,13 @@ def handle_exit_signal(signum, frame):
     logger.info("Received exit signal. Shutting down gracefully...")
     running = False
 
-    logger.info("Closing database connections...")
-    # close redis and mongo connections here
-
-
-    sys.exit(0)
+    try:
+        logger.info("Performing final bulk operations...")
+        mongo.create_words_bulk(create_words_entry_operations)
+        mongo.create_metadata_bulk(create_metadata_operations)
+        mongo.create_outlinks_bulk(create_outlinks_operations)
+    except NameError:
+        logger.warning("Signal received before initialization completed - no buffered operations to flush.")
 
 
 signal.signal(signal.SIGINT, handle_exit_signal)
@@ -62,7 +68,8 @@ if __name__ == "__main__":
         db=redis_db
     )
 
-    if redis.get_client().ping():
+    redis_client = redis.get_client()
+    if redis_client and redis_client.ping():
         logger.info("Successfully connected to Redis!")
     else:
         logger.error("Failed to connect to Redis. Exiting.")
@@ -73,13 +80,16 @@ if __name__ == "__main__":
     mongo = MongoClient(
         host=mongo_host,
         port=mongo_port,
+        db=mongo_db,
         username=mongo_user,
         password=mongo_password,
-        authSource=mongo_db
+        auth_source="admin",
     )
 
     try:
-        mongo.admin.command('ping')
+        if mongo.client is None:
+            raise RuntimeError("Mongo client is not initialized")
+        mongo.client.admin.command("ping")
         logger.info("Successfully connected to MongoDB!")
     except Exception as e:
         logger.error(f"Failed to connect to MongoDB: {e}. Exiting.")
@@ -122,7 +132,7 @@ if __name__ == "__main__":
     while running:
         queue_size = redis.get_queue_size()
         if queue_size == 0:
-            redis.crawler_signal()
+            redis.signal_crawler()
             logger.info("RESUME CRAWL signal sent")
 
         logger.info("Waiting for message queue")
@@ -204,7 +214,8 @@ if __name__ == "__main__":
         # Save the outlinks
         outlinks = redis.get_outlinks(normalized_url)
         outlinks_op = mongo.create_outlinks_entry_operation(outlinks)
-        create_outlinks_operations.append(outlinks_op)
+        if outlinks_op is not None:
+            create_outlinks_operations.append(outlinks_op)
 
         # Store all the words in the dictionary
         wordsSet = {word.lower() for word in text}
@@ -223,9 +234,9 @@ if __name__ == "__main__":
 
     # Save all remaining operations regardless of threshold
     logger.info("Final bulk operations before exit...")
+    mongo.create_words_bulk(create_words_entry_operations)
     mongo.create_metadata_bulk(create_metadata_operations)
     mongo.create_outlinks_bulk(create_outlinks_operations)
-    mongo.create_metadata_bulk(create_metadata_operations)
 
     logger.info("Shutting down...")
 

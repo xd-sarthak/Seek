@@ -9,7 +9,7 @@ from . import nlp_utils
 
 # Initialize NLTK resources
 STOP_WORDS = nlp_utils.initialize_nlp()
-stop_words_set = set(STOP_WORDS)
+stop_words_set = STOP_WORDS
 
 # Compile regex patterns once at module level
 NAME_SPLIT_PATTERN = re.compile(r"[-_./\s]+")
@@ -80,6 +80,8 @@ def process_text(soup):
 def detect_language(text, sample_size=1000):
     # Only use first 1000 characters for language detection
     sample = text[:sample_size]
+    if not sample.strip():
+        return "unknown", 0.0
     language, confidence = langid.classify(sample)
     return language, confidence
 
@@ -106,8 +108,6 @@ def get_html_data(html: str):
 
     title = meta_tags.get("og:title") or meta_tags.get("title")
     description = meta_tags.get("og:description") or meta_tags.get("description")
-    canonical_url = meta_tags.get("og:url") or meta_tags.get("url")
-
     # Get all paragraphs
     paragraphs = soup.select("p")
     page_text = " ".join(
